@@ -228,12 +228,12 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     }
 
     const goBack = () => {
-      view = 'main';
-      chatHistory = [];
-      inputBuffer = '';
       if (view === 'list') {
         listPanel.hidden = true;
       }
+      view = 'main';
+      chatHistory = [];
+      inputBuffer = '';
       refresh();
     };
 
