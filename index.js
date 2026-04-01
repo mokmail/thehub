@@ -8,7 +8,7 @@ const { chatCommand } = require('./src/commands/chat');
 const { generateCommand } = require('./src/commands/generate');
 
 program
-  .name('thehub')
+  .name('bev')
   .description('CLI tool for interacting with Ollama AI models')
   .version('1.0.0');
 

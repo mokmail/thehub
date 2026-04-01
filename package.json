@@ -1,10 +1,10 @@
 {
-  "name": "thehub",
+  "name": "bev",
   "version": "1.0.0",
-  "description": "A CLI package for TheHub",
+  "description": "A CLI tool for Ollama AI models",
   "main": "index.js",
   "bin": {
-    "thehub": "./index.js"
+    "bev": "./index.js"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

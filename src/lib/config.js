@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_DIR = path.join(process.env.HOME, '.thehub');
+const CONFIG_DIR = path.join(process.env.HOME, '.bev');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 function getConfig() {

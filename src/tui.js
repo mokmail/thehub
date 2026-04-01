@@ -1,5 +1,5 @@
 const blessed = require('blessed');
-const { ChatMemory } = require('./lib/ollama');
+const { generateResponseStream, ChatMemory } = require('./lib/ollama');
 const { getSelectedModel, saveSelectedModel } = require('./lib/config');
 const { BuildAgent } = require('./lib/buildAgent');
 
@@ -16,7 +16,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
   let buildAgent = null;
 
   const screen = blessed.screen({ smartSDrift: true });
-  screen.title = 'TheHub - Ollama CLI';
+  screen.title = 'bev - Ollama CLI';
 
   const header = blessed.text({
     parent: screen,
@@ -24,8 +24,8 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     left: 0,
     width: '100%',
     height: 3,
-    content: ' TheHub - Ollama CLI ',
-    style: { fg: 'black', bg: 'cyan', bold: true }
+    content: ' bev - Ollama CLI ',
+    style: { fg: 'black', bg: 'red', bold: true }
   });
 
   const modelBar = blessed.text({
@@ -35,7 +35,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     width: '100%',
     height: 1,
     content: ' Model: none selected ',
-    style: { fg: 'white', bg: 'blue' }
+    style: { fg: 'white', bg: 'red' }
   });
 
   const mainPanel = blessed.text({
@@ -58,7 +58,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     width: '100%',
     height: 1,
     content: ' [tab] Switch view | [q] Quit | [Enter] Select/Confirm ',
-    style: { fg: 'black', bg: 'yellow' }
+    style: { fg: 'black', bg: 'white' }
   });
 
   const inputBar = blessed.text({
@@ -78,12 +78,12 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     width: '100%-2',
     height: '100%-7',
     border: { type: 'line' },
-    style: { selected: { bg: 'blue' } },
+    style: { selected: { bg: 'red' } },
     hidden: true
   });
 
   function renderMain() {
-    let content = '{center}{bold}{cyan-fg}TheHub{/cyan-fg}{/bold}{/center}\n\n';
+    let content = '{center}{bold}{red-fg}bev{/red-fg}{/bold}{/center}\n\n';
     content += 'Available commands:\n\n';
     content += '  [l] List/select models - Show and optionally select a model\n';
     content += '  [c] Chat           - Start chat session\n';
@@ -104,15 +104,15 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     let content = '';
     chatHistory.forEach((msg, i) => {
       const prefix = msg.role === 'user' ? 'You' : 'Bot';
-      const color = msg.role === 'user' ? 'cyan-fg' : 'green-fg';
+      const color = msg.role === 'user' ? 'red-fg' : 'green-fg';
       content += `{${color}}{bold}${prefix}:{/bold}{/} ${msg.content}\n\n`;
     });
     if (isLoading) {
-      content += '{yellow-fg}Thinking...{/}\n';
+      content += '{white-fg}Thinking...{/}\n';
     }
     if (!content) {
-      content += '{italic}Type your message and press Enter to chat{/italic}\n';
-      content += 'Type "exit" to return to main menu\n';
+      content = 'Type your message and press Enter to chat\n';
+      content += 'Type "q" to return to main menu\n';
     }
     mainPanel.setContent(content);
     mainPanel.setScrollPerc(100);
@@ -123,7 +123,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     models.forEach((model, i) => {
       const marker = i === selectedIndex ? '> ' : '  ';
       if (i === selectedIndex) {
-        content += `{yellow-fg}${marker}${model}{/yellow-fg}\n`;
+        content += `{white-fg}${marker}${model}{/white-fg}\n`;
       } else {
         content += `{white-fg}${marker}${model}{/white-fg}\n`;
       }
@@ -157,11 +157,11 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     content += 'Type "back" to return to main menu\n\n';
     chatHistory.forEach((msg) => {
       const prefix = msg.role === 'user' ? 'You' : 'Bot';
-      const color = msg.role === 'user' ? 'cyan-fg' : 'green-fg';
+      const color = msg.role === 'user' ? 'red-fg' : 'green-fg';
       content += `{${color}}{bold}${prefix}:{/bold}{/} ${msg.content}\n\n`;
     });
     if (isLoading) {
-      content += '{yellow-fg}Processing...{/}\n';
+      content += '{white-fg}Processing...{/}\n';
     }
     mainPanel.setContent(content);
     mainPanel.setScrollPerc(100);
@@ -211,9 +211,14 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
 
     try {
       const prompt = memory.getContext();
-      const response = await generateResponse(currentModel, prompt);
-      memory.addMessage('assistant', response);
-      chatHistory.push({ role: 'assistant', content: response });
+      let fullResponse = '';
+      chatHistory.push({ role: 'assistant', content: '' });
+      await generateResponseStream(currentModel, prompt, (chunk) => {
+        fullResponse += chunk;
+        chatHistory[chatHistory.length - 1].content = fullResponse;
+        refresh();
+      });
+      memory.addMessage('assistant', fullResponse);
     } catch (error) {
       chatHistory.push({ role: 'assistant', content: `Error: ${error.message}` });
     }
@@ -329,8 +334,13 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
           inputBuffer = '';
           refresh();
           try {
-            const response = await generateResponse(currentModel, prompt);
-            chatHistory.push({ role: 'assistant', content: response });
+            let fullResponse = '';
+            chatHistory.push({ role: 'assistant', content: '' });
+            await generateResponseStream(currentModel, prompt, (chunk) => {
+              fullResponse += chunk;
+              chatHistory[chatHistory.length - 1].content = fullResponse;
+              refresh();
+            });
           } catch (error) {
             chatHistory.push({ role: 'assistant', content: `Error: ${error.message}` });
           }

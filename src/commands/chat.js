@@ -1,5 +1,5 @@
 const readline = require('readline');
-const { fetchModels, getModelInfo, generateResponse, ChatMemory } = require('../lib/ollama');
+const { fetchModels, getModelInfo, generateResponseStream, ChatMemory } = require('../lib/ollama');
 const { selectModelInteractively } = require('../lib/selector');
 const { getSelectedModel } = require('../lib/config');
 
@@ -56,9 +56,14 @@ async function chatCommand(options) {
     try {
       memory.addMessage('user', input);
       const promptWithContext = memory.getPromptWithContext(input);
-      const response = await generateResponse(model, promptWithContext);
-      memory.addMessage('assistant', response);
-      console.log(`Assistant: ${response}\n`);
+      let fullResponse = '';
+      process.stdout.write('Assistant: ');
+      await generateResponseStream(model, promptWithContext, (chunk) => {
+        fullResponse += chunk;
+        process.stdout.write(chunk);
+      });
+      console.log('\n');
+      memory.addMessage('assistant', fullResponse);
       rl.prompt();
     } catch (error) {
       console.error('Error communicating with Ollama:', error.message);

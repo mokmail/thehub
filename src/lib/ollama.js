@@ -33,6 +33,37 @@ async function generateResponse(model, prompt) {
   return response.data.response;
 }
 
+function generateResponseStream(model, prompt, onChunk) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const response = await axios.post(`${OLLAMA_API}/generate`, {
+        model,
+        prompt,
+        stream: true
+      }, { responseType: 'stream' });
+
+      let fullResponse = '';
+      response.data.on('data', (chunk) => {
+        const lines = chunk.toString().split('\n').filter(Boolean);
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if (data.response) {
+              fullResponse += data.response;
+              onChunk(data.response);
+            }
+          } catch (e) {}
+        }
+      });
+
+      response.data.on('end', () => resolve(fullResponse));
+      response.data.on('error', reject);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 class ChatMemory {
   constructor(contextWindow) {
     this.contextWindow = contextWindow;
@@ -68,4 +99,4 @@ class ChatMemory {
   }
 }
 
-module.exports = { fetchModels, getModelInfo, generateResponse, ChatMemory };
+module.exports = { fetchModels, getModelInfo, generateResponse, generateResponseStream, ChatMemory };
