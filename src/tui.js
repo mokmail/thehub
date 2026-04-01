@@ -108,7 +108,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
       content += `{${color}}{bold}${prefix}:{/bold}{/} ${msg.content}\n\n`;
     });
     if (isLoading) {
-      content += '{white-fg}Thinking...{/}\n';
+      content += '{red-fg}Thinking...{/}\n';
     }
     if (!content) {
       content = 'Type your message and press Enter to chat\n';
@@ -123,9 +123,9 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     models.forEach((model, i) => {
       const marker = i === selectedIndex ? '> ' : '  ';
       if (i === selectedIndex) {
-        content += `{white-fg}${marker}${model}{/white-fg}\n`;
+        content += `{red-fg}${marker}${model}{/white-fg}\n`;
       } else {
-        content += `{white-fg}${marker}${model}{/white-fg}\n`;
+        content += `{red-fg}${marker}${model}{/white-fg}\n`;
       }
     });
     if (currentModel) {
@@ -153,6 +153,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
   function renderBuild() {
     let content = '{center}{bold}Build Agent{/bold}{/center}\n\n';
     content += `Working directory: ${buildAgent ? buildAgent.cwd : process.cwd()}\n`;
+    content += `Context: {red-fg}${buildAgent ? buildAgent.getContextUsage() : 0}%{/red-fg} used\n`;
     content += 'Type natural language commands to modify files\n';
     content += 'Type "back" to return to main menu\n\n';
     chatHistory.forEach((msg) => {
@@ -161,7 +162,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
       content += `{${color}}{bold}${prefix}:{/bold}{/} ${msg.content}\n\n`;
     });
     if (isLoading) {
-      content += '{white-fg}Processing...{/}\n';
+      content += '{red-fg}Processing...{/}\n';
     }
     mainPanel.setContent(content);
     mainPanel.setScrollPerc(100);
@@ -174,7 +175,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     else if (view === 'generate') renderGenerate();
     else if (view === 'build') renderBuild();
 
-    modelBar.setContent(` Model: ${currentModel || 'none'} | Context: ${modelInfo.contextWindow} `);
+    modelBar.setContent(` Model: ${currentModel || 'none'} | Context: ${modelInfo.contextWindow} | ${buildAgent ? buildAgent.getContextUsage() : 0}%`);
     inputBar.setContent(` > ${inputBuffer}`);
     screen.render();
   }
@@ -362,13 +363,14 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
       } else if (key.name === 'enter') {
         if (inputBuffer.trim()) {
           isLoading = true;
+          chatHistory.push({ role: 'user', content: inputBuffer });
+          chatHistory.push({ role: 'assistant', content: '{red-fg}Processing...{/}' });
           refresh();
           try {
             const result = await buildAgent.processInput(inputBuffer);
-            chatHistory.push({ role: 'user', content: inputBuffer });
-            chatHistory.push({ role: 'assistant', content: result });
+            chatHistory[chatHistory.length - 1].content = result;
           } catch (error) {
-            chatHistory.push({ role: 'assistant', content: `Error: ${error.message}` });
+            chatHistory[chatHistory.length - 1].content = `Error: ${error.message}`;
           }
           inputBuffer = '';
           isLoading = false;
