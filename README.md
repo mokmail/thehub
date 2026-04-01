@@ -1,2 +1,1 @@
-# thehub
-# bev
+# Bev - CLI Tool for Ollama AI Models

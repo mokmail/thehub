@@ -14,6 +14,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
   let inputBuffer = '';
   let isLoading = false;
   let buildAgent = null;
+  let buildAgentAwaitingApproval = false;
 
   const screen = blessed.screen({ smartSDrift: true });
   screen.title = 'bev - Ollama CLI';
@@ -123,9 +124,9 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     models.forEach((model, i) => {
       const marker = i === selectedIndex ? '> ' : '  ';
       if (i === selectedIndex) {
-        content += `{red-fg}${marker}${model}{/white-fg}\n`;
+        content += `{red-fg}${marker}${model}{/red-fg}\n`;
       } else {
-        content += `{red-fg}${marker}${model}{/white-fg}\n`;
+        content += `{white-fg}${marker}${model}{/white-fg}\n`;
       }
     });
     if (currentModel) {
@@ -154,15 +155,20 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
     let content = '{center}{bold}Build Agent{/bold}{/center}\n\n';
     content += `Working directory: ${buildAgent ? buildAgent.cwd : process.cwd()}\n`;
     content += `Context: {red-fg}${buildAgent ? buildAgent.getContextUsage() : 0}%{/red-fg} used\n`;
-    content += 'Type natural language commands to modify files\n';
-    content += 'Type "back" to return to main menu\n\n';
+    if (buildAgentAwaitingApproval) {
+      content += '\n{yellow-fg}⚠️ Privileged commands pending approval{/yellow-fg}\n';
+      content += 'Type [y] to approve all or [n] to reject\n\n';
+    } else {
+      content += 'Type natural language commands to modify files\n';
+      content += 'Type "back" to return to main menu\n\n';
+    }
     chatHistory.forEach((msg) => {
       const prefix = msg.role === 'user' ? 'You' : 'Bot';
       const color = msg.role === 'user' ? 'red-fg' : 'green-fg';
       content += `{${color}}{bold}${prefix}:{/bold}{/} ${msg.content}\n\n`;
     });
     if (isLoading) {
-      content += '{red-fg}Processing...{/}\n';
+      content += '{red-fg}Thinking...{/}\n';
     }
     mainPanel.setContent(content);
     mainPanel.setScrollPerc(100);
@@ -240,6 +246,7 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
       view = 'main';
       chatHistory = [];
       inputBuffer = '';
+      buildAgentAwaitingApproval = false;
       refresh();
     };
 
@@ -356,7 +363,29 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
         refresh();
       }
     } else if (view === 'build') {
-      if (key.name === 'escape') {
+      if (buildAgentAwaitingApproval) {
+        if (key.name === 'enter' || ch === 'y' || ch === 'Y') {
+          const results = await buildAgent.executeAllPrivilegedCommands();
+          let resultText = chatHistory[chatHistory.length - 1].content;
+          resultText += '\n\n✅ APPROVED - Executed commands:\n';
+          results.forEach(r => {
+            resultText += `\nCommand: ${r.command}\nResult: ${r.result}\n`;
+          });
+          chatHistory[chatHistory.length - 1].content = resultText;
+          buildAgentAwaitingApproval = false;
+          refresh();
+        } else if (ch === 'n' || ch === 'N') {
+          let resultText = chatHistory[chatHistory.length - 1].content;
+          resultText += '\n\n❌ REJECTED by user';
+          chatHistory[chatHistory.length - 1].content = resultText;
+          buildAgent.clearPendingCommands();
+          buildAgentAwaitingApproval = false;
+          refresh();
+        } else if (ch) {
+          inputBuffer += ch;
+          refresh();
+        }
+      } else if (key.name === 'escape') {
         goBack();
       } else if (key.name === 'q') {
         goBack();
@@ -364,11 +393,24 @@ function createTUI({ fetchModels, getModelInfo, generateResponse }) {
         if (inputBuffer.trim()) {
           isLoading = true;
           chatHistory.push({ role: 'user', content: inputBuffer });
-          chatHistory.push({ role: 'assistant', content: '{red-fg}Processing...{/}' });
+          chatHistory.push({ role: 'assistant', content: '{red-fg}Thinking...{/}' });
           refresh();
           try {
-            const result = await buildAgent.processInput(inputBuffer);
-            chatHistory[chatHistory.length - 1].content = result;
+            const result = await buildAgent.processInput(inputBuffer, (chunk) => {
+              const lastMsg = chatHistory[chatHistory.length - 1];
+              if (lastMsg.content === '{red-fg}Thinking...{/}' || lastMsg.content.startsWith('{red-fg}Thinking...{/}')) {
+                lastMsg.content = '{red-fg}Thinking...{/}\n' + chunk;
+              } else {
+                lastMsg.content += chunk;
+              }
+              refresh();
+            });
+            if (result.pendingApproval) {
+              chatHistory[chatHistory.length - 1].content = result.summary;
+              buildAgentAwaitingApproval = true;
+            } else {
+              chatHistory[chatHistory.length - 1].content = result.summary || result;
+            }
           } catch (error) {
             chatHistory[chatHistory.length - 1].content = `Error: ${error.message}`;
           }

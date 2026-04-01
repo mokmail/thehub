@@ -12,14 +12,18 @@ Your capabilities:
 - Handle complex software engineering tasks
 
 Available commands:
-- READ <file> - Read contents of a file (use absolute or relative paths from workspace)
-- WRITE <file> <content> - Write content to a file (use | for newlines in content)
-- EDIT <file> <oldString> <newString> - Replace oldString with newString in file
+- READ <file> - Read contents of a file
+- WRITE <file> <content> - Write content to a file (use | for newlines)
+- EDIT <file> <oldString> <newString> - Replace oldString with newString
 - RUN <command> - Execute a shell command
 - LS <dir> - List directory contents
-- GLOB <pattern> - Find files matching glob pattern (e.g., "**/*.js")
+- GLOB <pattern> - Find files matching glob pattern
 - GREP <pattern> <file?> - Search for pattern in files
 - TREE <dir> - Show directory tree structure
+- STAT <file> - Show file metadata
+- EXISTS <file> - Check if file exists
+- MKDIR <dir> - Create directory
+- DELETE <file> - Delete a file
 
 Context window usage is tracked. Keep responses concise and efficient.
 
@@ -32,6 +36,9 @@ When handling tasks:
 
 Always be thorough but efficient with context window usage.`;
 
+const PRIVILEGED_COMMANDS = ['WRITE', 'EDIT', 'RUN', 'DELETE', 'MKDIR'];
+const SAFE_COMMANDS = ['READ', 'LS', 'GLOB', 'GREP', 'TREE', 'STAT', 'EXISTS'];
+
 class BuildAgent {
   constructor(cwd, model, contextWindow = 4096) {
     this.cwd = cwd;
@@ -40,6 +47,7 @@ class BuildAgent {
     this.memory = new ChatMemory(contextWindow);
     this.memory.addMessage('system', SYSTEM_PROMPT);
     this.projectContext = '';
+    this.pendingCommands = [];
   }
 
   getContextUsage() {
@@ -105,6 +113,13 @@ class BuildAgent {
 
     this.projectContext = context;
     return context;
+  }
+
+  getCommandType(command) {
+    const cmd = command.split(' ')[0].toUpperCase();
+    if (PRIVILEGED_COMMANDS.includes(cmd)) return 'privileged';
+    if (SAFE_COMMANDS.includes(cmd)) return 'safe';
+    return 'unknown';
   }
 
   async executeCommand(command) {
@@ -242,12 +257,86 @@ class BuildAgent {
           }
         }
 
+        case 'STAT': {
+          if (!args[0]) return 'Error: STAT requires a file path';
+          const filePath = path.resolve(this.cwd, args[0]);
+          if (!filePath.startsWith(this.cwd)) {
+            return 'Error: Path outside working directory';
+          }
+          if (!fs.existsSync(filePath)) {
+            return `Error: File not found: ${args[0]}`;
+          }
+          const stats = fs.statSync(filePath);
+          return `File: ${args[0]}
+Size: ${stats.size} bytes
+Created: ${stats.birthtime}
+Modified: ${stats.mtime}
+Is Directory: ${stats.isDirectory()}
+Is File: ${stats.isFile()}`;
+        }
+
+        case 'EXISTS': {
+          if (!args[0]) return 'Error: EXISTS requires a file path';
+          const filePath = path.resolve(this.cwd, args[0]);
+          if (!filePath.startsWith(this.cwd)) {
+            return 'Error: Path outside working directory';
+          }
+          return fs.existsSync(filePath) ? 'Yes, file exists' : 'No, file does not exist';
+        }
+
+        case 'MKDIR': {
+          if (!args[0]) return 'Error: MKDIR requires a directory path';
+          const dirPath = path.resolve(this.cwd, args[0]);
+          if (!dirPath.startsWith(this.cwd)) {
+            return 'Error: Path outside working directory';
+          }
+          fs.mkdirSync(dirPath, { recursive: true });
+          return `Created directory: ${args[0]}`;
+        }
+
+        case 'DELETE': {
+          if (!args[0]) return 'Error: DELETE requires a file path';
+          const filePath = path.resolve(this.cwd, args[0]);
+          if (!filePath.startsWith(this.cwd)) {
+            return 'Error: Path outside working directory';
+          }
+          if (!fs.existsSync(filePath)) {
+            return `Error: File not found: ${args[0]}`;
+          }
+          fs.unlinkSync(filePath);
+          return `Deleted: ${args[0]}`;
+        }
+
         default:
-          return `Unknown command: ${cmd}. Use READ, WRITE, EDIT, RUN, LS, GLOB, GREP, or TREE.`;
+          return `Unknown command: ${cmd}. Use READ, WRITE, EDIT, RUN, LS, GLOB, GREP, TREE, STAT, EXISTS, MKDIR, or DELETE.`;
       }
     } catch (error) {
       return `Error: ${error.message}`;
     }
+  }
+
+  parseCommands(response) {
+    const safeCommands = [];
+    const privilegedCommands = [];
+
+    const commandBlocks = response.match(/\[COMMAND\]\n?([\s\S]*?)\n?\[\/COMMAND\]/gi) || [response];
+    
+    for (const block of commandBlocks) {
+      const commands = block.replace(/\[COMMAND\]\n?/gi, '').replace(/\n?\[\/COMMAND\]/gi, '').trim();
+      const commandLines = commands.split('\n').filter(l => l.trim());
+      
+      for (const command of commandLines) {
+        const trimmed = command.trim();
+        const cmdType = this.getCommandType(trimmed);
+        if (cmdType === 'safe' && /^(READ|LS|GLOB|GREP|TREE|STAT|EXISTS)\s/i.test(trimmed)) {
+          safeCommands.push(trimmed);
+        } else if (cmdType === 'privileged' && /^(WRITE|EDIT|RUN|DELETE|MKDIR)\s/i.test(trimmed)) {
+          privilegedCommands.push(trimmed);
+        }
+      }
+    }
+
+    return { safeCommands, privilegedCommands };
   }
 
   async processInput(userInput, onChunk = null) {
@@ -256,41 +345,92 @@ class BuildAgent {
     const projectInfo = await this.buildProjectContext();
     const contextUsage = this.getContextUsage();
     
-    const systemPrompt = `Current project context:\n${projectInfo}\n\nContext window usage: ${contextUsage}%`;
+    const systemPrompt = `Current project context:\n${projectInfo}\n\nContext window usage: ${contextUsage}%
 
-    const conversation = `${systemPrompt}\n\n${this.memory.getContext()}\n\nUser: ${userInput}\n\nFormat your response with commands wrapped in XML-like tags:\n[COMMAND]\nWRITE path/to/file content here\n[/COMMAND]\n\nOr for multiple commands:\n[COMMAND]\nREAD src/file.js\nEDIT src/file.js old text new text\n[/COMMAND]\n\nYou can chain multiple commands. Always write/edit files when requested.`;
+SAFE commands (auto-executed): READ, LS, GLOB, GREP, TREE, STAT, EXISTS
+PRIVILEGED commands (require approval): WRITE, EDIT, RUN, DELETE, MKDIR`;
+
+    const conversation = `${systemPrompt}\n\n${this.memory.getContext()}\n\nUser: ${userInput}\n\nFormat your response with commands wrapped in XML-like tags:\n[COMMAND]\nREAD src/file.js\nWRITE src/file.js content here\n[/COMMAND]\n\nFor privileged commands like WRITE, EDIT, RUN, DELETE, MKDIR - the user will be asked to approve them.`;
 
     let fullResponse = '';
+    
     if (onChunk) {
+      let currentBlock = '';
       await generateResponseStream(this.model, conversation, (chunk) => {
         fullResponse += chunk;
-        onChunk(chunk);
+        currentBlock += chunk;
+        if (currentBlock.includes('\n') || currentBlock.includes('[/COMMAND]')) {
+          onChunk(currentBlock);
+          currentBlock = '';
+        }
       });
     } else {
       const { generateResponse } = require('./ollama');
       fullResponse = await generateResponse(this.model, conversation);
     }
 
-    const results = [];
-    const commandBlocks = fullResponse.match(/\[COMMAND\]\n?([\s\S]*?)\n?\[\/COMMAND\]/gi) || [fullResponse];
-    
-    for (const block of commandBlocks) {
-      const commands = block.replace(/\[COMMAND\]\n?/gi, '').replace(/\n?\[\/COMMAND\]/gi, '').trim();
-      const commandLines = commands.split('\n').filter(l => l.trim());
-      
-      for (const command of commandLines) {
-        const trimmed = command.trim();
-        if (trimmed && /^(READ|WRITE|EDIT|RUN|LS|GLOB|GREP|TREE)\s/i.test(trimmed)) {
-          const result = await this.executeCommand(trimmed);
-          results.push({ command: trimmed, result });
-        }
-      }
+    const { safeCommands, privilegedCommands } = this.parseCommands(fullResponse);
+
+    this.pendingCommands = [...privilegedCommands];
+
+    const safeResults = [];
+    for (const cmd of safeCommands) {
+      const result = await this.executeCommand(cmd);
+      safeResults.push({ command: cmd, result, type: 'safe' });
     }
-    
-    const summary = results.map(r => `Command: ${r.command}\nResult: ${r.result}`).join('\n---\n');
+
+    let summary = '';
+    if (safeResults.length > 0) {
+      summary += safeResults.map(r => `Command: ${r.command}\nResult: ${r.result}`).join('\n---\n');
+    }
+
+    if (privilegedCommands.length > 0) {
+      summary += `\n\n⚠️ PRIVILEGED COMMANDS REQUIRING APPROVAL:\n`;
+      privilegedCommands.forEach((cmd, i) => {
+        summary += `[${i + 1}] ${cmd}\n`;
+      });
+      summary += `\nAwaiting user approval...`;
+    }
+
+    if (safeCommands.length === 0 && privilegedCommands.length === 0) {
+      summary = fullResponse;
+    }
+
     this.memory.addMessage('assistant', summary || `Output: ${fullResponse}`);
     
-    return summary || fullResponse;
+    return {
+      summary,
+      safeResults,
+      privilegedCommands,
+      pendingApproval: privilegedCommands.length > 0
+    };
+  }
+
+  async executePrivilegedCommands(approvedIndices) {
+    const results = [];
+    for (const index of approvedIndices) {
+      if (index >= 0 && index < this.pendingCommands.length) {
+        const cmd = this.pendingCommands[index];
+        const result = await this.executeCommand(cmd);
+        results.push({ command: cmd, result });
+      }
+    }
+    this.pendingCommands = [];
+    return results;
+  }
+
+  async executeAllPrivilegedCommands() {
+    return this.executePrivilegedCommands(
+      this.pendingCommands.map((_, i) => i)
+    );
+  }
+
+  getPendingCommands() {
+    return this.pendingCommands;
+  }
+
+  clearPendingCommands() {
+    this.pendingCommands = [];
   }
 
   clearMemory() {
