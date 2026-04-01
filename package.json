@@ -1,0 +1,21 @@
+{
+  "name": "thehub",
+  "version": "1.0.0",
+  "description": "A CLI package for TheHub",
+  "main": "index.js",
+  "bin": {
+    "thehub": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.14.0",
+    "blessed": "^0.1.81",
+    "commander": "^14.0.3"
+  }
+}
